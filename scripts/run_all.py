@@ -68,16 +68,9 @@ def main():
     from scripts.figure3_roc_pr_epochs import make_figure3
     make_figure3(features_path, args.output)
 
-    # Step 5: Figure 4
+    # Step 5: Table 1
     print("\n" + "=" * 60)
-    print("STEP 5: Generating Figure 4 (ROC/PR, R-peak level)")
-    print("=" * 60)
-    from scripts.figure4_roc_pr_peaks import make_figure4
-    make_figure4(features_path, args.output)
-
-    # Step 6: Table 1
-    print("\n" + "=" * 60)
-    print("STEP 6: Generating Table 1 (overall performance)")
+    print("STEP 5: Generating Table 1 (overall performance)")
     print("=" * 60)
     from scripts.table1_overall import compute_table1
     compute_table1(features_path, args.output)

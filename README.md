@@ -83,7 +83,6 @@ python scripts/preprocess_data.py --data-dir data/ --output data/processed/
 python scripts/figure1_ecg_rri_adrri.py --data-dir data/ --output outputs/
 python scripts/figure2_kde_distributions.py --features data/processed/features.pkl --output outputs/
 python scripts/figure3_roc_pr_epochs.py --features data/processed/features.pkl --output outputs/
-python scripts/figure4_roc_pr_peaks.py --features data/processed/features.pkl --output outputs/
 python scripts/table1_overall.py --features data/processed/features.pkl --output outputs/
 python scripts/table2_per_subject.py --features data/processed/features.pkl --output outputs/
 ```
@@ -95,7 +94,6 @@ python scripts/table2_per_subject.py --features data/processed/features.pkl --ou
 | `figure1_ecg_rri_adrri.py` | Figure 1 | ECG signal, RRI, and adRRI with R-peak labels |
 | `figure2_kde_distributions.py` | Figure 2 | Kernel density of log(adRRI) for valid vs artifact |
 | `figure3_roc_pr_epochs.py` | Figure 3 | ROC and PR curves for epoch-level evaluation |
-| `figure4_roc_pr_peaks.py` | Figure 4 | ROC and PR curves for individual R-peak evaluation |
 | `table1_overall.py` | Table 1 | All-subject performance (SE, SP, PPV, LR+, LR-) |
 | `table2_per_subject.py` | Table 2 | Per-subject medians and IQR |
 
