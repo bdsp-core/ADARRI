@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Figure 4: ROC and Precision-Recall curves for individual R-peak evaluation.
 
-Evaluates artifact detection at the individual R-peak level rather than
-epoch level. Uses adRRI threshold with theta=85ms as the optimal point.
+Evaluates artifact detection at the individual R-peak level using raw
+per-R-peak adRRI. Each R-peak inherits the label of its epoch.
 
 Usage:
     python scripts/figure4_roc_pr_peaks.py --features data/processed/features.pkl --output outputs/
@@ -21,29 +21,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from adarri.detector import THETA_RPEAK
 
 
-def _get_rpeak_labels(epochs, epoch_labels):
-    """Assign individual R-peak labels based on epoch labels.
-
-    Each R-peak inherits the label of its epoch.
-
-    Returns:
-        all_adrri: Concatenated adRRI values for all R-peaks.
-        all_rpeak_labels: Label per adRRI value.
-    """
-    all_adrri = []
-    all_labels = []
-
-    for j, ep in enumerate(epochs):
-        adrri = ep["adrri_ms"]
-        label = epoch_labels[j]
-        # Prepend 0 to match MATLAB: adRRI = [0 abs(diff(interval))]
-        adrri_with_leading = np.concatenate([[0], adrri])
-        all_adrri.append(adrri_with_leading)
-        all_labels.append(np.full(len(adrri_with_leading), label, dtype=int))
-
-    return np.concatenate(all_adrri), np.concatenate(all_labels)
-
-
 def make_figure4(features_path, output_dir):
     """Generate Figure 4."""
     os.makedirs(output_dir, exist_ok=True)
@@ -60,15 +37,28 @@ def make_figure4(features_path, output_dir):
 
     all_labels = np.array(all_labels)
 
-    # Get per-R-peak adRRI values and labels
-    all_adrri, rpeak_labels = _get_rpeak_labels(all_epochs, all_labels)
+    # Get per-R-peak raw adRRI values and labels
+    # Each R-peak inherits the label of its epoch
+    all_adrri = []
+    rpeak_labels = []
+
+    for j, ep in enumerate(all_epochs):
+        adrri = ep["adrri_raw_ms"]  # Raw per-R-peak adRRI with leading 0
+        label = all_labels[j]
+        all_adrri.append(adrri)
+        rpeak_labels.append(np.full(len(adrri), label, dtype=int))
+
+    all_adrri = np.concatenate(all_adrri)
+    rpeak_labels = np.concatenate(rpeak_labels)
 
     print(f"Total R-peak detections: {len(all_adrri)}")
-    print(f"  Valid: {np.sum(rpeak_labels == 0)} ({np.sum(rpeak_labels == 0)/len(rpeak_labels)*100:.1f}%)")
-    print(f"  Artifact: {np.sum(rpeak_labels == 1)} ({np.sum(rpeak_labels == 1)/len(rpeak_labels)*100:.1f}%)")
+    print(f"  Valid: {np.sum(rpeak_labels == 0)} "
+          f"({np.sum(rpeak_labels == 0)/len(rpeak_labels)*100:.1f}%)")
+    print(f"  Artifact: {np.sum(rpeak_labels == 1)} "
+          f"({np.sum(rpeak_labels == 1)/len(rpeak_labels)*100:.1f}%)")
 
-    # Sweep thresholds for Method A
-    thresholds = np.linspace(0, np.max(all_adrri) * 1.1, 500)
+    # --- Method A: sweep thresholds ---
+    thresholds = np.linspace(0, np.percentile(all_adrri, 99), 500)
 
     se_a, sp_a, ppv_a = [], [], []
     for th in thresholds:
@@ -84,43 +74,58 @@ def make_figure4(features_path, output_dir):
     se_a, sp_a, ppv_a = np.array(se_a), np.array(sp_a), np.array(ppv_a)
     fpr_a = 1 - sp_a
 
-    # Method B: Berntson threshold
-    iqr_val = scipy_iqr(all_adrri)
-    med_val = np.median(all_adrri)
-    MEDn = iqr_val / 2.0 * 3.32
-    MADa = (med_val - 2.9 * iqr_val) / 3.0
-    th_b = (abs(MEDn) + abs(MADa)) / 2.0
-    preds_b = (all_adrri > th_b).astype(int)
-    tp_b = np.sum((rpeak_labels == 1) & (preds_b == 1))
-    fn_b = np.sum((rpeak_labels == 1) & (preds_b == 0))
-    tn_b = np.sum((rpeak_labels == 0) & (preds_b == 0))
-    fp_b = np.sum((rpeak_labels == 0) & (preds_b == 1))
-    se_b = tp_b / (tp_b + fn_b) if (tp_b + fn_b) > 0 else 0
-    sp_b = tn_b / (tn_b + fp_b) if (tn_b + fp_b) > 0 else 0
-    ppv_b = tp_b / (tp_b + fp_b) if (tp_b + fp_b) > 0 else 1
-
-    # Find optimal point for Method A
+    # Optimal point (max balanced accuracy)
     acc_a = (se_a + sp_a) / 2
     best_idx = np.argmax(acc_a)
     optimal_theta = thresholds[best_idx]
-    print(f"\nOptimal theta (R-peak level): {optimal_theta:.1f} ms")
-    print(f"  Paper value: {THETA_RPEAK} ms")
-    print(f"  SE={se_a[best_idx]*100:.0f}%, SP={sp_a[best_idx]*100:.0f}%, PPV={ppv_a[best_idx]*100:.0f}%")
+    print(f"\nOptimal theta (R-peak level): {optimal_theta:.1f} ms "
+          f"(paper: {THETA_RPEAK} ms)")
+    print(f"  SE={se_a[best_idx]*100:.0f}%, SP={sp_a[best_idx]*100:.0f}%, "
+          f"PPV={ppv_a[best_idx]*100:.0f}%")
 
-    # Plot
+    # --- Method B: Berntson per-epoch threshold ---
+    all_b_preds = []
+    all_b_labels = []
+    for j, ep in enumerate(all_epochs):
+        adrri = ep["adrri_raw_ms"]
+        label = all_labels[j]
+        iqr_val = scipy_iqr(adrri)
+        med_val = np.median(adrri)
+        MEDn = iqr_val / 2.0 * 3.32
+        MADa = (med_val - 2.9 * iqr_val) / 3.0
+        th_b_j = (abs(MEDn) + abs(MADa)) / 2.0
+        all_b_preds.append((adrri > th_b_j).astype(int))
+        all_b_labels.append(np.full(len(adrri), label, dtype=int))
+    preds_b = np.concatenate(all_b_preds)
+    rpeak_labels_b = np.concatenate(all_b_labels)
+    tp_b = np.sum((rpeak_labels_b == 1) & (preds_b == 1))
+    fn_b = np.sum((rpeak_labels_b == 1) & (preds_b == 0))
+    tn_b = np.sum((rpeak_labels_b == 0) & (preds_b == 0))
+    fp_b = np.sum((rpeak_labels_b == 0) & (preds_b == 1))
+    se_b = tp_b / (tp_b + fn_b) if (tp_b + fn_b) > 0 else 0
+    sp_b = tn_b / (tn_b + fp_b) if (tn_b + fp_b) > 0 else 0
+    ppv_b = tp_b / (tp_b + fp_b) if (tp_b + fp_b) > 0 else 1
+    print(f"Method B (per-epoch Berntson): "
+          f"SE={se_b*100:.0f}%, SP={sp_b*100:.0f}%, PPV={ppv_b*100:.0f}%")
+
+    # --- AUC ---
+    sorted_idx = np.argsort(fpr_a)
+    auc_a = np.trapezoid(se_a[sorted_idx], fpr_a[sorted_idx])
+
+    # --- Plot ---
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     # ROC curve
     ax = axes[0]
-    ax.plot(fpr_a, se_a, "b-", linewidth=2, label="Method A (ADARRI)")
+    ax.plot(fpr_a, se_a, "b-", linewidth=2, label=f"Method A (AUC={auc_a:.3f})")
     ax.plot(1 - sp_b, se_b, "gs", markersize=10, label="Method B (Berntson)")
     ax.plot(fpr_a[best_idx], se_a[best_idx], "b*", markersize=15,
-            label=f"Optimal A (\u03b8={optimal_theta:.0f}ms)")
+            label=f"Optimal A ($\\theta$={optimal_theta:.0f}ms)")
     ax.plot([0, 1], [0, 1], "k--", alpha=0.3)
     ax.set_xlabel("1 - Specificity (FPR)")
     ax.set_ylabel("Sensitivity (TPR)")
     ax.set_title("ROC Curve - Individual R-peak Evaluation")
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower right", fontsize=9)
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
     ax.grid(True, alpha=0.3)
@@ -133,7 +138,7 @@ def make_figure4(features_path, output_dir):
     ax.set_xlabel("Recall (Sensitivity)")
     ax.set_ylabel("Precision (PPV)")
     ax.set_title("Precision-Recall Curve - Individual R-peak Evaluation")
-    ax.legend(loc="lower left")
+    ax.legend(loc="lower left", fontsize=9)
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
     ax.grid(True, alpha=0.3)

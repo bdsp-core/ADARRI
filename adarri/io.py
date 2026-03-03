@@ -42,16 +42,18 @@ def load_all_patients(data_dir):
     Returns:
         list of dicts, each from load_segment_scores(), with added 'patient_id' key.
     """
-    pattern = os.path.join(data_dir, "SegmentScores_Artifact_*.mat")
-    files = sorted(glob.glob(pattern))
+    # Support both naming conventions: patient_*.mat and SegmentScores_Artifact_*.mat
+    files = sorted(glob.glob(os.path.join(data_dir, "patient_*.mat")))
+    if not files:
+        files = sorted(glob.glob(os.path.join(data_dir, "SegmentScores_Artifact_*.mat")))
     if not files:
         raise FileNotFoundError(
-            f"No SegmentScores_Artifact_*.mat files found in {data_dir}"
+            f"No patient_*.mat or SegmentScores_Artifact_*.mat files found in {data_dir}"
         )
 
     patients = []
     for f in files:
-        patient_id = os.path.basename(f).replace("SegmentScores_Artifact_", "").replace(".mat", "")
+        patient_id = os.path.basename(f).replace("SegmentScores_Artifact_", "").replace("patient_", "").replace(".mat", "")
         data = load_segment_scores(f)
         data["patient_id"] = patient_id
         data["filepath"] = f

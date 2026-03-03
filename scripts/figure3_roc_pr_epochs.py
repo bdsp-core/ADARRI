@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Figure 3: ROC and Precision-Recall curves for epoch-level evaluation.
 
-Compares all methods (A, B, C, AC, BC) at the epoch level.
+Compares all methods (A, B, C, AC, BC) at the epoch level using raw
+per-R-peak adRRI. An epoch is classified as artifact if max(raw_adRRI) >
+threshold.
 
 Usage:
     python scripts/figure3_roc_pr_epochs.py --features data/processed/features.pkl --output outputs/
@@ -17,51 +19,8 @@ import numpy as np
 from scipy.stats import iqr as scipy_iqr
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-
-def _classify_all_epochs_method_a(epochs, thresholds):
-    """Method A: classify epochs using adRRI threshold sweep."""
-    n_epochs = len(epochs)
-    n_th = len(thresholds)
-    predictions = np.zeros((n_th, n_epochs), dtype=int)
-
-    # Get max adRRI per epoch
-    max_adrri = np.array([np.max(ep["adrri_ms"]) for ep in epochs])
-
-    for t_idx, th in enumerate(thresholds):
-        predictions[t_idx] = (max_adrri > np.exp(th)).astype(int)
-
-    return predictions
-
-
-def _classify_all_epochs_method_b(epochs, labels):
-    """Method B (Berntson): single operating point."""
-    # Pool all adRRI to compute threshold
-    all_adrri = np.concatenate([ep["adrri_ms"] for ep in epochs])
-    iqr_val = scipy_iqr(all_adrri)
-    med_val = np.median(all_adrri)
-    MEDn = iqr_val / 2.0 * 3.32
-    MADa = (med_val - 2.9 * iqr_val) / 3.0
-    threshold = (abs(MEDn) + abs(MADa)) / 2.0
-
-    max_adrri = np.array([np.max(ep["adrri_ms"]) for ep in epochs])
-    predictions = (max_adrri > threshold).astype(int)
-    return predictions
-
-
-def _classify_all_epochs_method_c(epochs, labels):
-    """Method C (Clifford): single operating point based on 20% change."""
-    from adarri.clifford import detect_artifacts_clifford
-
-    predictions = np.zeros(len(epochs), dtype=int)
-    for j, ep in enumerate(epochs):
-        rri_ms = ep["rri_ms"]
-        # Use indices as pseudo-times
-        times = np.arange(len(rri_ms), dtype=np.float64)
-        flags = detect_artifacts_clifford(times, rri_ms, pc=80)
-        if np.any(flags):
-            predictions[j] = 1
-    return predictions
+from adarri.clifford import detect_artifacts_clifford
+from adarri.detector import THETA_EPOCH
 
 
 def make_figure3(features_path, output_dir):
@@ -75,20 +34,25 @@ def make_figure3(features_path, output_dir):
     all_epochs = []
     all_labels = []
     for pt_idx in range(len(data["X"])):
-        epochs = data["X"][pt_idx]
-        labels = data["Y"][pt_idx]
-        all_epochs.extend(epochs)
-        all_labels.extend(labels.tolist())
+        all_epochs.extend(data["X"][pt_idx])
+        all_labels.extend(data["Y"][pt_idx].tolist())
 
     all_labels = np.array(all_labels)
 
-    # Method A: sweep thresholds for ROC
-    all_log_adrri_max = np.array([np.log(np.max(ep["adrri_ms"])) for ep in all_epochs])
-    th_range = np.linspace(np.min(all_log_adrri_max), np.max(all_log_adrri_max), 500)
+    # --- Method A: sweep thresholds on raw adRRI ---
+    # Max raw adRRI per epoch (excluding leading zero)
+    raw_adrri_max = np.array([
+        np.max(ep["adrri_raw_ms"][1:]) if len(ep["adrri_raw_ms"]) > 1 else 0
+        for ep in all_epochs
+    ])
+
+    # Sweep in log space (matching MATLAB: max(data) > exp(theta))
+    log_max = np.log(np.maximum(raw_adrri_max, 1e-10))
+    th_range = np.linspace(np.min(log_max), np.max(log_max), 500)
 
     se_a, sp_a, ppv_a = [], [], []
     for th in th_range:
-        preds = (all_log_adrri_max > th).astype(int)
+        preds = (log_max > th).astype(int)
         tp = np.sum((all_labels == 1) & (preds == 1))
         fn = np.sum((all_labels == 1) & (preds == 0))
         tn = np.sum((all_labels == 0) & (preds == 0))
@@ -100,8 +64,27 @@ def make_figure3(features_path, output_dir):
     se_a, sp_a, ppv_a = np.array(se_a), np.array(sp_a), np.array(ppv_a)
     fpr_a = 1 - sp_a
 
-    # Method B: single point
-    preds_b = _classify_all_epochs_method_b(all_epochs, all_labels)
+    # Optimal point (max accuracy)
+    acc_a = (se_a + sp_a) / 2
+    best_idx = np.argmax(acc_a)
+    optimal_theta_ms = np.exp(th_range[best_idx])
+    print(f"Method A optimal threshold: {optimal_theta_ms:.0f} ms "
+          f"(paper: {THETA_EPOCH} ms)")
+    print(f"  SE={se_a[best_idx]*100:.0f}%, SP={sp_a[best_idx]*100:.0f}%, "
+          f"PPV={ppv_a[best_idx]*100:.0f}%")
+
+    # --- Method B (Berntson): per-epoch threshold (matching MATLAB fcn_Sunils_data) ---
+    preds_b = np.zeros(len(all_epochs), dtype=int)
+    for j, ep in enumerate(all_epochs):
+        adrri = ep["adrri_raw_ms"]
+        iqr_val = scipy_iqr(adrri)
+        med_val = np.median(adrri)
+        MEDn = iqr_val / 2.0 * 3.32
+        MADa = (med_val - 2.9 * iqr_val) / 3.0
+        th_b_j = (abs(MEDn) + abs(MADa)) / 2.0
+        if np.max(adrri) > th_b_j:
+            preds_b[j] = 1
+
     tp_b = np.sum((all_labels == 1) & (preds_b == 1))
     fn_b = np.sum((all_labels == 1) & (preds_b == 0))
     tn_b = np.sum((all_labels == 0) & (preds_b == 0))
@@ -110,9 +93,18 @@ def make_figure3(features_path, output_dir):
     sp_b = tn_b / (tn_b + fp_b) if (tn_b + fp_b) > 0 else 0
     ppv_b = tp_b / (tp_b + fp_b) if (tp_b + fp_b) > 0 else 1
     fpr_b = 1 - sp_b
+    print(f"Method B (per-epoch Berntson): "
+          f"SE={se_b*100:.0f}%, SP={sp_b*100:.0f}%, PPV={ppv_b*100:.0f}%")
 
-    # Method C: single point
-    preds_c = _classify_all_epochs_method_c(all_epochs, all_labels)
+    # --- Method C (Clifford): single operating point ---
+    preds_c = np.zeros(len(all_epochs), dtype=int)
+    for j, ep in enumerate(all_epochs):
+        rri_ms = ep["rri_raw_ms"]
+        times_ms = ep["times_raw"] * 1000
+        flags = detect_artifacts_clifford(times_ms, rri_ms, pc=80)
+        if np.any(flags):
+            preds_c[j] = 1
+
     tp_c = np.sum((all_labels == 1) & (preds_c == 1))
     fn_c = np.sum((all_labels == 1) & (preds_c == 0))
     tn_c = np.sum((all_labels == 0) & (preds_c == 0))
@@ -121,25 +113,27 @@ def make_figure3(features_path, output_dir):
     sp_c = tn_c / (tn_c + fp_c) if (tn_c + fp_c) > 0 else 0
     ppv_c = tp_c / (tp_c + fp_c) if (tp_c + fp_c) > 0 else 1
     fpr_c = 1 - sp_c
+    print(f"Method C: SE={se_c*100:.0f}%, SP={sp_c*100:.0f}%, PPV={ppv_c*100:.0f}%")
 
-    # Plot
+    # --- Compute AUC ---
+    sorted_idx = np.argsort(fpr_a)
+    auc_a = np.trapezoid(se_a[sorted_idx], fpr_a[sorted_idx])
+
+    # --- Plot ---
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     # ROC curve
     ax = axes[0]
-    ax.plot(fpr_a, se_a, "b-", linewidth=2, label="Method A (ADARRI)")
+    ax.plot(fpr_a, se_a, "b-", linewidth=2, label=f"Method A (AUC={auc_a:.3f})")
     ax.plot(fpr_b, se_b, "gs", markersize=10, label="Method B (Berntson)")
     ax.plot(fpr_c, se_c, "r^", markersize=10, label="Method C (Clifford)")
-    # Mark optimal point for Method A (max accuracy)
-    acc_a = (se_a + sp_a) / 2
-    best_idx = np.argmax(acc_a)
     ax.plot(fpr_a[best_idx], se_a[best_idx], "b*", markersize=15,
-            label=f"Optimal A (SE={se_a[best_idx]:.2f}, SP={sp_a[best_idx]:.2f})")
+            label=f"Optimal A ($\\theta$={optimal_theta_ms:.0f}ms)")
     ax.plot([0, 1], [0, 1], "k--", alpha=0.3)
     ax.set_xlabel("1 - Specificity (FPR)")
     ax.set_ylabel("Sensitivity (TPR)")
     ax.set_title("ROC Curve - Epoch Evaluation")
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower right", fontsize=9)
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
     ax.grid(True, alpha=0.3)
@@ -153,7 +147,7 @@ def make_figure3(features_path, output_dir):
     ax.set_xlabel("Recall (Sensitivity)")
     ax.set_ylabel("Precision (PPV)")
     ax.set_title("Precision-Recall Curve - Epoch Evaluation")
-    ax.legend(loc="lower left")
+    ax.legend(loc="lower left", fontsize=9)
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.02])
     ax.grid(True, alpha=0.3)

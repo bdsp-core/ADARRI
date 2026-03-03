@@ -2,6 +2,7 @@
 """Table 2: Performance of methods A, B, and C for individual subjects.
 
 Computes per-subject metrics and reports medians and IQR.
+Uses raw per-R-peak adRRI for Methods A and B, and raw RRI for Method C.
 
 Usage:
     python scripts/table2_per_subject.py --features data/processed/features.pkl --output outputs/
@@ -47,37 +48,45 @@ def compute_table2(features_path, output_dir):
         if len(epochs) == 0 or np.sum(labels == 0) == 0 or np.sum(labels == 1) == 0:
             continue
 
-        # Method A: find patient-specific optimal threshold
-        all_log_adrri_max = np.array([np.log(np.max(ep["adrri_ms"])) for ep in epochs])
-        thresholds = np.linspace(np.min(all_log_adrri_max), np.max(all_log_adrri_max), 500)
+        # Max raw adRRI per epoch (excluding leading zero)
+        raw_adrri_max = np.array([
+            np.max(ep["adrri_raw_ms"][1:]) if len(ep["adrri_raw_ms"]) > 1 else 0
+            for ep in epochs
+        ])
+
+        # Method A: find patient-specific optimal threshold in log space
+        log_max = np.log(np.maximum(raw_adrri_max, 1e-10))
+        thresholds = np.linspace(np.min(log_max), np.max(log_max), 500)
         best_acc, best_th_idx = 0, 0
         for t_idx, th in enumerate(thresholds):
-            preds = (all_log_adrri_max > th).astype(int)
+            preds = (log_max > th).astype(int)
             acc = np.sum(preds == labels) / len(labels)
             if acc > best_acc:
                 best_acc = acc
                 best_th_idx = t_idx
 
-        preds_a = (all_log_adrri_max > thresholds[best_th_idx]).astype(int)
+        preds_a = (log_max > thresholds[best_th_idx]).astype(int)
         results_a.append(compute_metrics(labels, preds_a))
 
-        # Method B: Berntson patient-specific threshold
-        all_adrri = np.concatenate([ep["adrri_ms"] for ep in epochs])
-        iqr_val = scipy_iqr(all_adrri)
-        med_val = np.median(all_adrri)
-        MEDn = iqr_val / 2.0 * 3.32
-        MADa = (med_val - 2.9 * iqr_val) / 3.0
-        th_b = (abs(MEDn) + abs(MADa)) / 2.0
-
-        preds_b = np.array([1 if np.max(ep["adrri_ms"]) > th_b else 0 for ep in epochs])
+        # Method B: Berntson per-epoch threshold on raw adRRI
+        preds_b = np.zeros(len(epochs), dtype=int)
+        for j, ep in enumerate(epochs):
+            adrri = ep["adrri_raw_ms"]
+            iqr_val = scipy_iqr(adrri)
+            med_val = np.median(adrri)
+            MEDn = iqr_val / 2.0 * 3.32
+            MADa = (med_val - 2.9 * iqr_val) / 3.0
+            th_b_j = (abs(MEDn) + abs(MADa)) / 2.0
+            if np.max(adrri) > th_b_j:
+                preds_b[j] = 1
         results_b.append(compute_metrics(labels, preds_b))
 
-        # Method C: Clifford
+        # Method C: Clifford using raw RRI
         preds_c = np.zeros(len(epochs), dtype=int)
         for j, ep in enumerate(epochs):
-            rri_ms = ep["rri_ms"]
-            times = np.arange(len(rri_ms), dtype=np.float64)
-            flags = detect_artifacts_clifford(times, rri_ms, pc=80)
+            rri_ms = ep["rri_raw_ms"]
+            times_ms = ep["times_raw"] * 1000
+            flags = detect_artifacts_clifford(times_ms, rri_ms, pc=80)
             if np.any(flags):
                 preds_c[j] = 1
         results_c.append(compute_metrics(labels, preds_c))

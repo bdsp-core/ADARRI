@@ -51,12 +51,18 @@ def preprocess_all(data_dir, output_dir):
             try:
                 result = process_epoch(ecg, sampling_rate=240, step_ms=10)
                 if result is not None:
+                    # Raw per-R-peak adRRI (paper's definition)
+                    rri_raw_ms = result["rri_raw"] * 1000.0
+                    adrri_raw_ms = np.concatenate([[0], np.abs(np.diff(rri_raw_ms))])
                     epoch_data.append({
                         "rri_ms": result["rri_ms"],
                         "adrri_ms": result["adrri_ms"],
                         "r_peaks": result["r_peaks"],
+                        "rri_raw_ms": rri_raw_ms,
                         "rri_raw": result["rri_raw"],
                         "times_raw": result["times_raw"],
+                        "adrri_raw_ms": adrri_raw_ms,
+                        "ecg": ecg,
                     })
                     valid_labels.append(0)
             except Exception as e:
@@ -67,12 +73,17 @@ def preprocess_all(data_dir, output_dir):
             try:
                 result = process_epoch(ecg, sampling_rate=240, step_ms=10)
                 if result is not None:
+                    rri_raw_ms = result["rri_raw"] * 1000.0
+                    adrri_raw_ms = np.concatenate([[0], np.abs(np.diff(rri_raw_ms))])
                     epoch_data.append({
                         "rri_ms": result["rri_ms"],
                         "adrri_ms": result["adrri_ms"],
                         "r_peaks": result["r_peaks"],
+                        "rri_raw_ms": rri_raw_ms,
                         "rri_raw": result["rri_raw"],
                         "times_raw": result["times_raw"],
+                        "adrri_raw_ms": adrri_raw_ms,
+                        "ecg": ecg,
                     })
                     valid_labels.append(1)
             except Exception as e:

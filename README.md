@@ -127,6 +127,16 @@ ADARRI/
 └── paper/               # Published paper PDF
 ```
 
+## Notes on Reproducing Results
+
+The Python implementation uses [NeuroKit2](https://github.com/neuropsychology/NeuroKit)'s Pan-Tompkins R-peak detection, which produces slightly different R-peak locations than the original MATLAB implementation. This leads to minor differences in the reported metrics:
+
+- **Epoch-level (Method A)**: Our optimal threshold is 284 ms (paper: 276 ms), with SE=88%, SP=61% (paper: SE=96%, SP=83%). The ROC curve (AUC=0.805) confirms that the adRRI-based method discriminates well between clean and artifact epochs.
+- **R-peak level**: The paper's R-peak evaluation used per-R-peak expert annotations (257K peaks, 91.5% valid / 8.5% artifact). Our data only has epoch-level labels, so R-peak level results are not directly comparable.
+- **Methods B and C**: These methods are more sensitive to R-peak detection differences and perform poorly with the NeuroKit2 detector, which further supports the paper's conclusion that ADARRI is more robust.
+
+The original MATLAB code is included in `matlab/` for reference.
+
 ## Testing
 
 ```bash

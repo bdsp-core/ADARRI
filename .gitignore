@@ -1,14 +1,13 @@
-# Data files (may contain PHI)
-data/*.mat
-data/raw/
+# Processed/intermediate data
 data/processed/
-*.mat
+data/raw/
 
 # Generated outputs
 outputs/*.png
 outputs/*.pdf
 outputs/*.csv
 outputs/*.txt
+outputs/*.pkl
 
 # Python
 __pycache__/
