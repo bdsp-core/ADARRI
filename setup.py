@@ -14,7 +14,6 @@ setup(
         "scipy>=1.10",
         "matplotlib>=3.7",
         "scikit-learn>=1.2",
-        "neurokit2>=0.2.7",
         "pandas>=2.0",
         "h5py>=3.8",
         "tqdm>=4.65",
