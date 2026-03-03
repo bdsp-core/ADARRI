@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Figure 1: Overview of RRI and adRRI derived from R-peak detection.
+"""Figure 1: Illustration of the ADARRI method.
 
-Three-panel figure matching the paper's style:
-  (a) ECG signal with R-peaks labeled (valid=blue diamonds, artifact=red X's)
-  (b) RRI time series with valid/artifact R-peaks distinguished
-  (c) adRRI time series showing threshold separation
+Three-panel figure matching the paper's Figure 1:
+  (a) ECG signal with R-peaks labeled (valid=blue diamonds, artifact=red X)
+  (b) RRI: blue=valid-only RRI, red=all-peaks RRI (showing artifact effect)
+  (c) adRRI: blue=valid-only adRRI, red=all-peaks adRRI
+
+The key insight: one spurious R-peak (Rx) causes dramatic changes in
+the RRI and adRRI sequences (red), while the valid-only sequences (blue)
+remain stable.
 
 Usage:
     python scripts/figure1_ecg_rri_adrri.py --data-dir data/ --output outputs/
@@ -21,168 +25,185 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from adarri.io import load_all_patients
 from adarri.peak_detection import detect_r_peaks
 from adarri.rri import compute_rri
-from adarri.detector import THETA_RPEAK
 
 
-def find_good_artifact_epoch(patients):
-    """Find an artifact epoch with a mix of valid and artifact-like R-peaks."""
-    best_epoch = None
-    best_score = -1
-
-    for pt_idx, patient in enumerate(patients):
-        for ep_idx, ecg in enumerate(patient["artifact_epochs"]):
-            r_peaks = detect_r_peaks(ecg, 240)
-            if len(r_peaks) < 6 or len(r_peaks) > 20:
-                continue
-
-            rri, times = compute_rri(r_peaks, 240)
-            rri_ms = rri * 1000.0
-            adrri_ms = np.concatenate([[0], np.abs(np.diff(rri_ms))])
-
-            n_above = np.sum(adrri_ms > THETA_RPEAK)
-            n_below = np.sum(adrri_ms <= THETA_RPEAK)
-
-            # Want a good mix of flagged and unflagged peaks
-            if n_above >= 2 and n_below >= 3:
-                score = min(n_above, n_below)
-                if score > best_score:
-                    best_score = score
-                    best_epoch = {
-                        "ecg": ecg,
-                        "r_peaks": r_peaks,
-                        "rri_ms": rri_ms,
-                        "times": times,
-                        "adrri_ms": adrri_ms,
-                        "patient_idx": pt_idx,
-                        "epoch_idx": ep_idx,
-                    }
-
-    return best_epoch
+# Pre-selected epoch that closely matches the paper's Figure 1:
+# Clean ECG, one small artifact peak (93 mV vs 465 mV valid median),
+# very consistent valid RRI (~917 ms, CV=0.5%), dramatic adRRI (579 ms).
+DEFAULT_PATIENT = 11
+DEFAULT_EPOCH_TYPE = "artifact_epochs"
+DEFAULT_EPOCH_IDX = 13
+DEFAULT_START_SAMPLE = 7680
+DEFAULT_ART_IDX = 3  # index of the artifact peak within the window
 
 
-def make_figure1(data_dir, output_dir, patient_idx=None, epoch_idx=None):
+def make_figure1(data_dir, output_dir, patient_idx=None, epoch_type=None,
+                 epoch_idx=None, start_sample=None, art_idx=None):
     """Generate Figure 1 from the paper."""
     os.makedirs(output_dir, exist_ok=True)
     patients = load_all_patients(data_dir)
-
-    if patient_idx is not None and epoch_idx is not None:
-        ecg = patients[patient_idx]["artifact_epochs"][epoch_idx]
-        r_peaks = detect_r_peaks(ecg, 240)
-        rri, times = compute_rri(r_peaks, 240)
-        rri_ms = rri * 1000.0
-        adrri_ms = np.concatenate([[0], np.abs(np.diff(rri_ms))])
-        ep = {
-            "ecg": ecg, "r_peaks": r_peaks, "rri_ms": rri_ms,
-            "times": times, "adrri_ms": adrri_ms,
-        }
-    else:
-        ep = find_good_artifact_epoch(patients)
-        if ep is None:
-            print("Could not find a suitable artifact epoch, using first artifact epoch")
-            ecg = patients[0]["artifact_epochs"][0]
-            r_peaks = detect_r_peaks(ecg, 240)
-            rri, times = compute_rri(r_peaks, 240)
-            rri_ms = rri * 1000.0
-            adrri_ms = np.concatenate([[0], np.abs(np.diff(rri_ms))])
-            ep = {
-                "ecg": ecg, "r_peaks": r_peaks, "rri_ms": rri_ms,
-                "times": times, "adrri_ms": adrri_ms,
-            }
-
-    ecg = ep["ecg"]
-    r_peaks = ep["r_peaks"]
-    rri_ms = ep["rri_ms"]
-    times_s = ep["times"]
-    adrri_ms = ep["adrri_ms"]
     fs = 240
+    window_samples = int(8000 / 1000.0 * fs)  # 8 seconds
 
-    # Classify each R-peak: artifact if adRRI > theta
-    # adrri_ms has N-1 entries (for N R-peaks); pad with False for last R-peak
-    flags_rri = adrri_ms > THETA_RPEAK  # length N-1 (same as rri_ms)
-    flags = np.concatenate([flags_rri, [False]])  # length N (same as r_peaks)
+    pt = patient_idx if patient_idx is not None else DEFAULT_PATIENT
+    etype = epoch_type if epoch_type is not None else DEFAULT_EPOCH_TYPE
+    ep = epoch_idx if epoch_idx is not None else DEFAULT_EPOCH_IDX
+    start = start_sample if start_sample is not None else DEFAULT_START_SAMPLE
+    art_k = art_idx if art_idx is not None else DEFAULT_ART_IDX
 
-    # Time axes
-    ecg_time_s = np.arange(len(ecg)) / fs
-    rri_time_s = times_s
-    adrri_time_s = times_s
+    ecg_full = patients[pt][etype][ep]
+    r_peaks_full = detect_r_peaks(ecg_full, fs)
 
-    fig, axes = plt.subplots(3, 1, figsize=(12, 9))
+    # Extract window
+    end = start + window_samples
+    mask = (r_peaks_full >= start) & (r_peaks_full < end)
+    r_peaks_abs = r_peaks_full[mask]
+    r_peaks = r_peaks_abs - start  # relative to window
+    ecg = ecg_full[start:end]
+    n_peaks = len(r_peaks)
 
-    # --- (a) ECG signal with R-peak markers ---
+    if n_peaks < 3 or art_k >= n_peaks:
+        print(f"ERROR: Invalid parameters (n_peaks={n_peaks}, art_idx={art_k})")
+        return
+
+    # Separate valid and artifact peaks
+    all_peaks = r_peaks
+    valid_peaks = np.delete(r_peaks, art_k)
+    n_valid = len(valid_peaks)
+
+    # Time axes in ms
+    ecg_time_ms = np.arange(len(ecg)) / fs * 1000.0
+    all_times_ms = all_peaks / fs * 1000.0
+    valid_times_ms = valid_peaks / fs * 1000.0
+
+    # RRI using ALL peaks (red "artifactual")
+    all_rri_ms = np.diff(all_peaks) / fs * 1000.0
+    all_rri_times_ms = all_times_ms[:-1]
+    n_all_rri = len(all_rri_ms)
+
+    # RRI using only VALID peaks (blue "valid")
+    valid_rri_ms = np.diff(valid_peaks) / fs * 1000.0
+    valid_rri_times_ms = valid_times_ms[:-1]
+    n_valid_rri = len(valid_rri_ms)
+
+    # adRRI for both
+    all_adrri_ms = np.abs(np.diff(all_rri_ms))
+    all_adrri_times_ms = all_rri_times_ms[:-1]
+
+    valid_adrri_ms = np.abs(np.diff(valid_rri_ms))
+    valid_adrri_times_ms = valid_rri_times_ms[:-1]
+
+    # --- Create the figure ---
+    fig, axes = plt.subplots(3, 1, figsize=(10, 8.5))
+    plt.subplots_adjust(hspace=0.40, left=0.10, right=0.96, top=0.97, bottom=0.06)
+
+    # ========== Panel (a): ECG ==========
     ax = axes[0]
-    ax.plot(ecg_time_s, ecg, "k-", linewidth=0.5, alpha=0.7)
+    ax.plot(ecg_time_ms, ecg, "k-", linewidth=0.5)
 
-    valid_mask = ~flags[:len(r_peaks)]
-    artifact_mask = flags[:len(r_peaks)]
+    # Valid R-peaks: blue diamonds
+    ax.plot(ecg_time_ms[valid_peaks], ecg[valid_peaks], "bD",
+            markersize=7, markerfacecolor="blue", markeredgecolor="blue",
+            zorder=5)
 
-    valid_peaks = r_peaks[valid_mask]
-    artifact_peaks = r_peaks[artifact_mask]
+    # Artifact R-peak: red X
+    art_peak = all_peaks[art_k]
+    ax.plot(ecg_time_ms[art_peak], ecg[art_peak], "rx",
+            markersize=10, markeredgewidth=2.5, zorder=5)
 
-    ax.plot(ecg_time_s[valid_peaks], ecg[valid_peaks], "bD",
-            markersize=6, label="Valid R-peaks", markerfacecolor="blue")
-    ax.plot(ecg_time_s[artifact_peaks], ecg[artifact_peaks], "rx",
-            markersize=8, markeredgewidth=2, label="Artifact R-peaks")
+    # Label peaks: R_1, R_2, ... for valid; R_x for artifact
+    valid_num = 0
+    for i in range(n_peaks):
+        t_ms = ecg_time_ms[all_peaks[i]]
+        y_val = ecg[all_peaks[i]]
+        if i == art_k:
+            label = r"$\mathrm{R}_\mathrm{x}$"
+            color = "red"
+        else:
+            valid_num += 1
+            label = rf"$\mathrm{{R}}_{{{valid_num}}}$"
+            color = "blue"
+        ax.annotate(label, (t_ms, y_val),
+                    textcoords="offset points", xytext=(0, 14),
+                    fontsize=9, ha="center", color=color)
 
-    for i, rp in enumerate(r_peaks):
-        ax.annotate(f"R$_{{{i+1}}}$", (ecg_time_s[rp], ecg[rp]),
-                     textcoords="offset points", xytext=(0, 12),
-                     fontsize=7, ha="center",
-                     color="red" if flags[i] else "blue")
+    ax.set_ylabel("Amplitude (mV)", fontsize=10)
+    ax.text(0.01, 0.95, r"$\mathbf{a}$  ECG", transform=ax.transAxes,
+            fontsize=12, fontweight="bold", va="top")
+    ax.set_xlim([0, ecg_time_ms[-1]])
 
-    ax.set_ylabel("Amplitude")
-    ax.set_title("(a) ECG signal with detected R-peaks")
-    ax.legend(loc="upper right", fontsize=9)
-    ax.set_xlim([ecg_time_s[0], ecg_time_s[-1]])
-
-    # --- (b) RRI time series ---
+    # ========== Panel (b): RRI ==========
     ax = axes[1]
 
-    for i in range(len(rri_ms)):
-        color = "red" if flags_rri[i] else "blue"
-        marker = "x" if flags_rri[i] else "D"
-        ms = 8 if flags_rri[i] else 5
-        ax.plot(rri_time_s[i], rri_ms[i], marker=marker, color=color,
-                markersize=ms, markeredgewidth=1.5 if flags_rri[i] else 1)
+    # Blue: valid-only RRI (dash-dot + diamonds)
+    ax.plot(valid_rri_times_ms, valid_rri_ms, "b-.",
+            linewidth=1.5, zorder=3, label='"Valid"')
+    ax.plot(valid_rri_times_ms, valid_rri_ms, "bD",
+            markersize=7, markerfacecolor="blue", markeredgecolor="blue",
+            zorder=4)
 
-    for i in range(len(rri_ms) - 1):
-        if flags_rri[i] or flags_rri[i + 1]:
-            ax.plot([rri_time_s[i], rri_time_s[i + 1]],
-                    [rri_ms[i], rri_ms[i + 1]], "r:", linewidth=1.5)
-        else:
-            ax.plot([rri_time_s[i], rri_time_s[i + 1]],
-                    [rri_ms[i], rri_ms[i + 1]], "b-.", linewidth=1.5)
+    # Red: all-peaks RRI (dotted + X markers)
+    ax.plot(all_rri_times_ms, all_rri_ms, "r:",
+            linewidth=1.5, zorder=3, label='"Artifactual"')
+    ax.plot(all_rri_times_ms, all_rri_ms, "rx",
+            markersize=8, markeredgewidth=2, zorder=4)
 
-    ax.set_ylabel("RRI (ms)")
-    ax.set_title("(b) RR interval time series")
-    ax.set_xlim([ecg_time_s[0], ecg_time_s[-1]])
+    # B subscripts for valid (below points)
+    for i in range(n_valid_rri):
+        ax.annotate(rf"$\mathrm{{B}}_{{{i}}}$",
+                    (valid_rri_times_ms[i], valid_rri_ms[i]),
+                    textcoords="offset points", xytext=(8, -14),
+                    fontsize=7, ha="center", color="blue")
 
-    # --- (c) adRRI with threshold ---
+    # B subscripts for all (above points)
+    for i in range(n_all_rri):
+        ax.annotate(rf"$\mathrm{{B}}_{{{i}}}$",
+                    (all_rri_times_ms[i], all_rri_ms[i]),
+                    textcoords="offset points", xytext=(8, 10),
+                    fontsize=7, ha="center", color="red")
+
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
+    ax.set_ylabel("Time (ms)", fontsize=10)
+    ax.text(0.01, 0.95, r"$\mathbf{b}$  RRI", transform=ax.transAxes,
+            fontsize=12, fontweight="bold", va="top")
+    ax.set_xlim([0, ecg_time_ms[-1]])
+
+    # ========== Panel (c): adRRI ==========
     ax = axes[2]
 
-    for i in range(len(adrri_ms)):
-        color = "red" if flags_rri[i] else "blue"
-        marker = "x" if flags_rri[i] else "D"
-        ms = 8 if flags_rri[i] else 5
-        ax.plot(adrri_time_s[i], adrri_ms[i], marker=marker, color=color,
-                markersize=ms, markeredgewidth=1.5 if flags_rri[i] else 1)
+    # Blue: valid-only adRRI
+    ax.plot(valid_adrri_times_ms, valid_adrri_ms, "b-.",
+            linewidth=1.5, zorder=3)
+    ax.plot(valid_adrri_times_ms, valid_adrri_ms, "bD",
+            markersize=7, markerfacecolor="blue", markeredgecolor="blue",
+            zorder=4)
 
-    for i in range(len(adrri_ms) - 1):
-        if flags_rri[i] or flags_rri[i + 1]:
-            ax.plot([adrri_time_s[i], adrri_time_s[i + 1]],
-                    [adrri_ms[i], adrri_ms[i + 1]], "r:", linewidth=1.5)
-        else:
-            ax.plot([adrri_time_s[i], adrri_time_s[i + 1]],
-                    [adrri_ms[i], adrri_ms[i + 1]], "b-.", linewidth=1.5)
+    # Red: all-peaks adRRI
+    ax.plot(all_adrri_times_ms, all_adrri_ms, "r:",
+            linewidth=1.5, zorder=3)
+    ax.plot(all_adrri_times_ms, all_adrri_ms, "rx",
+            markersize=8, markeredgewidth=2, zorder=4)
 
-    ax.axhline(y=THETA_RPEAK, color="green", linestyle="--", linewidth=1.5,
-               label=f"$\\theta$ = {THETA_RPEAK} ms")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("adRRI (ms)")
-    ax.set_title("(c) Absolute difference of adjacent RR intervals")
-    ax.legend(loc="upper right", fontsize=9)
-    ax.set_xlim([ecg_time_s[0], ecg_time_s[-1]])
+    # A subscripts for valid (below)
+    for i in range(len(valid_adrri_ms)):
+        ax.annotate(rf"$\mathrm{{A}}_{{{i}}}$",
+                    (valid_adrri_times_ms[i], valid_adrri_ms[i]),
+                    textcoords="offset points", xytext=(8, -14),
+                    fontsize=7, ha="center", color="blue")
 
-    plt.tight_layout()
+    # A subscripts for all (above)
+    for i in range(len(all_adrri_ms)):
+        ax.annotate(rf"$\mathrm{{A}}_{{{i}}}$",
+                    (all_adrri_times_ms[i], all_adrri_ms[i]),
+                    textcoords="offset points", xytext=(8, 10),
+                    fontsize=7, ha="center", color="red")
+
+    ax.set_xlabel("Time (ms)", fontsize=10)
+    ax.set_ylabel("Time (ms)", fontsize=10)
+    ax.text(0.01, 0.95, r"$\mathbf{c}$  adRRI", transform=ax.transAxes,
+            fontsize=12, fontweight="bold", va="top")
+    ax.set_xlim([0, ecg_time_ms[-1]])
+
     outpath = os.path.join(output_dir, "figure1_ecg_rri_adrri.png")
     plt.savefig(outpath, dpi=300, bbox_inches="tight")
     print(f"Saved Figure 1 to {outpath}")
@@ -194,6 +215,10 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", default="data/")
     parser.add_argument("--output", default="outputs/")
     parser.add_argument("--patient", type=int, default=None)
+    parser.add_argument("--epoch-type", default=None)
     parser.add_argument("--epoch", type=int, default=None)
+    parser.add_argument("--start", type=int, default=None)
+    parser.add_argument("--art-idx", type=int, default=None)
     args = parser.parse_args()
-    make_figure1(args.data_dir, args.output, args.patient, args.epoch)
+    make_figure1(args.data_dir, args.output, args.patient, args.epoch_type,
+                 args.epoch, args.start, args.art_idx)
