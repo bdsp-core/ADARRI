@@ -20,6 +20,24 @@ ADARRI uses the **absolute difference of adjacent RR intervals (adRRI)** to iden
 - Individual R-peak level: SE=99%, SP=95%, PPV=95% at threshold theta=85 ms
 - Outperforms Berntson's (Method B) and Clifford's (Method C) methods on ICU data
 
+### Figure 1: The ADARRI Method
+
+A single spurious R-peak (R_x) causes dramatic distortions in the RRI and adRRI sequences (red), while valid-only sequences (blue) remain stable.
+
+![Figure 1](outputs/figure1_ecg_rri_adrri.png)
+
+### Epoch-Level ROC and Precision-Recall Curves
+
+Method A (ADARRI) achieves AUC=0.952 and clearly outperforms Methods B (Berntson) and C (Clifford).
+
+![Figure 3](outputs/figure3_roc_pr_epochs.png)
+
+### Effect of Artifact Reduction on HRV Spectrogram
+
+Before artifact reduction (a), spikes in the RRI time series contaminate the HRV spectrogram. After ADARRI-based cleaning (b), the spectrogram reveals the true underlying frequency structure.
+
+![HRV Spectrogram](outputs/figure_hrv_spectrogram.png)
+
 ## Installation
 
 ```bash
@@ -85,6 +103,9 @@ python scripts/figure2_kde_distributions.py --features data/processed/features.p
 python scripts/figure3_roc_pr_epochs.py --features data/processed/features.pkl --output outputs/
 python scripts/table1_overall.py --features data/processed/features.pkl --output outputs/
 python scripts/table2_per_subject.py --features data/processed/features.pkl --output outputs/
+
+# HRV spectrogram (before/after artifact reduction, uses separate IBI data)
+python scripts/figure_hrv_spectrogram.py --data data/ibi_for_Dennis.mat --output outputs/
 ```
 
 ### Outputs
@@ -96,6 +117,7 @@ python scripts/table2_per_subject.py --features data/processed/features.pkl --ou
 | `figure3_roc_pr_epochs.py` | Figure 3 | ROC and PR curves for epoch-level evaluation |
 | `table1_overall.py` | Table 1 | All-subject performance (SE, SP, PPV, LR+, LR-) |
 | `table2_per_subject.py` | Table 2 | Per-subject medians and IQR |
+| `figure_hrv_spectrogram.py` | — | HRV spectrogram before/after artifact reduction |
 
 ## Methods
 

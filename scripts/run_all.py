@@ -82,6 +82,17 @@ def main():
     from scripts.table2_per_subject import compute_table2
     compute_table2(features_path, args.output)
 
+    # Step 8: HRV Spectrogram
+    ibi_path = os.path.join(args.data_dir, "ibi_for_Dennis.mat")
+    if os.path.exists(ibi_path):
+        print("\n" + "=" * 60)
+        print("STEP 8: Generating HRV spectrogram (before/after artifact reduction)")
+        print("=" * 60)
+        from scripts.figure_hrv_spectrogram import make_figure
+        make_figure(ibi_path, args.output)
+    else:
+        print(f"\nSkipping HRV spectrogram (ibi_for_Dennis.mat not found in {args.data_dir})")
+
     print("\n" + "=" * 60)
     print("ALL DONE! Results saved to: " + args.output)
     print("=" * 60)

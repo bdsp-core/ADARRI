@@ -2,12 +2,15 @@
 data/processed/
 data/raw/
 
-# Generated outputs
-outputs/*.png
+# Generated outputs (except key figures embedded in README)
 outputs/*.pdf
 outputs/*.csv
 outputs/*.txt
 outputs/*.pkl
+outputs/*.png
+!outputs/figure1_ecg_rri_adrri.png
+!outputs/figure3_roc_pr_epochs.png
+!outputs/figure_hrv_spectrogram.png
 
 # Python
 __pycache__/
