@@ -1,0 +1,39 @@
+# Data files (may contain PHI)
+data/*.mat
+data/raw/
+data/processed/
+*.mat
+
+# Generated outputs
+outputs/*.png
+outputs/*.pdf
+outputs/*.csv
+outputs/*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
